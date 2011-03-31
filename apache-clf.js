@@ -7,7 +7,7 @@ var IN_TIME = 1, IN_REQ = 2, IN_CODE = 3, IN_REF = 4, IN_UA = 5,
 
 exports.process_log_line = function(l) {
 
-// "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\"( %T)?"
+// "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\" %D"
 // This is fugly to be faster than a regex.
 
   var o = {}, i = 0, state = 0;
