@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+require.paths.unshift(__dirname);
+
+var sys = require('sys'),
+    http = require('http'),
+    leftovers = '',
+    secure = false,
+    processor = null,
+    service_token = null,
+    beacon_type = 'event',
+    retry = 10,
+    keep_on_running = true,
+    options = { };
+
+function help() {
+  sys.puts(process.argv[1] + " -p <processor>:\n\n" +
+           "\t-h\t\tthis help message\n" +
+           "\t-r <seconds>\tretry failed attempts up to <seconds> seconds\n" +
+           "\t-s\t\tenable secure (https) submission\n" +
+           "\t-p <processor>\tyour processor for log lines (required)\n" +
+           "\t-t <token>\tthe Circonus beacon token\n" +
+           "\t-b <type>\tthe Circonus beacon type (default: event)\n");
+}
+
+for(var i=2; i<process.argv.length; i++) {
+  switch(process.argv[i]) {
+    case "-h": help(); process.exit(-1);
+    case "-s": secure = true; break;
+    case "-t": service_token = process.argv[++i]; break;
+    case "-b": beacon_type = process.argv[++i]; break;
+    case "-p": processor = require(process.argv[++i]); break;
+    default:
+      sys.puts("unknown argument: " + process.argv[i]);
+      help();
+      process.exit(-1);
+  }
+}
+
+if(!processor) {
+  help();
+  process.exit(-1);
+}
+
+options = { host: service_token + '.b.circonus.net'
+          , port: secure ? 443 : 80
+          , path: '/_bulk'
+          , method: 'PUT'
+          , headers: { 'Content-Type': 'application/json; charset=utf-8'
+                     , 'X-Beacon-Type': beacon_type
+                     }
+          };
+
+function Queue(){var _1=[];var _2=0;this.getSize=function(){return _1.length-_2;};this.isEmpty=function(){return (_1.length==0);};this.enqueue=function(_3){_1.push(_3);};this.dequeue=function(){var _4=undefined;if(_1.length){_4=_1[_2];if(++_2*2>=_1.length){_1=_1.slice(_2);_2=0;}}return _4;};this.getOldestElement=function(){var _5=undefined;if(_1.length){_5=_1[_2];}return _5;};}
+
+var logs = new Queue(),
+    todo = new Queue();
+    stdin_handler = function(chunk) {
+      try {
+        if(chunk.length < 1) return;
+        var end = chunk.charAt(chunk.length - 1) == "\n",
+            lines, i, len;
+        lines = chunk.split("\n");
+        lines[0] = leftovers + lines[0];
+        leftovers = end ? '' : lines.pop();
+        for(i=0; i<lines.length; i++)
+          if(lines[i].length > 0) logs.enqueue(processor.process_log_line(lines[i]));
+      } catch(e) { }
+    };
+
+process.stdin.resume();
+process.stdin.setEncoding('utf-8');
+process.stdin.on('data', stdin_handler);
+process.stdin.on('end', function() { keep_on_running = false; });
+
+function push_to_circonus() {
+  var oarray = [], req;
+  // build and array to submit
+  while(!logs.isEmpty()) oarray.push(logs.dequeue());
+  // push the whole array on the todo list
+  if(oarray.length)
+    todo.enqueue({ time: +(new Date())
+                 , payload: JSON.stringify(oarray)
+                 , inflight: false
+                 , done: false });
+  // process the todo list
+  while(!todo.isEmpty()) {
+    var now = +(new Date()),
+        o = todo.getOldestElement();
+    if(o.time + retry * 1000 < now || o.done) todo.dequeue();
+    else {
+      // give it a whirl.
+      o = todo.dequeue();
+      if(o.inflight) { sys.puts("inflight op still in queue"); continue; }
+      o.inflight = true;
+      options.headers['content-length'] = Buffer.byteLength(o.payload, 'utf8');
+      req = http.request(options, function(res) {
+        if(res.statusCode == 200) o.done = true;
+        res.on('end', function() {
+          if(o.inflight) { o.inflight = false; todo.enqueue(o); }
+        });
+      });
+      delete options.headers['content-length'];
+      req.on('error', function(err) {
+        if(o.inflight) { o.inflight = false; todo.enqueue(o); }
+      });
+      req.write(o.payload);
+      req.end();
+    }
+  }
+  if(keep_on_running) setTimeout(push_to_circonus, 1000);
+}
+push_to_circonus();
