@@ -55,17 +55,17 @@ exports.process_log_line = function(l) {
         break;
       case IN_UA:
         if(m[i].substr(0,1) === "\"" && m[i].substr(-1) === "\"") {
-          o['user-agent'] = m[i].substr(1,m[i].length-2);
+          o.user_agent = m[i].substr(1,m[i].length-2);
           state = OPT_TIME;
         }
         else if(m[i].substr(0,1) === "\"") {
-          if(!o['user-agent']) o['user-agent'] = m[i].substr(1);
+          if(!o.user_agent) o.user_agent = m[i].substr(1);
         }
         else if(m[i].substr(-1) === "\"") {
-          o['user-agent'] = o['user-agent'] + " " + m[i].substr(0,m[i].length-1);
+          o.user_agent = o.user_agent + " " + m[i].substr(0,m[i].length-1);
           state = OPT_TIME;
         }
-        else o['user-agent'] = o['user-agent'] + " " + m[i];
+        else o.user_agent = o.user_agent + " " + m[i];
         i++;
         break;
       case OPT_TIME:
